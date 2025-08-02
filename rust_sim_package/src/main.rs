@@ -1,87 +1,79 @@
-use std::collections::{VecDeque, HashMap};
+use std::collections::{HashMap, VecDeque};
 
 
-fn main() {
-
-    // let people:Vec<Person> = vec![
-    //     Person{id:1,spawn_time:1,process_time:5},
-    //     Person{id:2,spawn_time:2,process_time:5},
-    //     Person{id:3,spawn_time:3,process_time:5},
-    //     Person{id:4,spawn_time:4,process_time:5},
-    //     Person{id:5,spawn_time:5,process_time:5},
-    //     Person{id:6,spawn_time:6,process_time:5},
-    // ];
-
-    let person_a:Person = Person {id:1,spawn_time:10,process_time:1};
-    let person_b:Person = Person {id:2,spawn_time:5,process_time:7};
-    let mut sim_env:Environment = Environment::new();
-
-    person_a.process(&mut sim_env);
-    person_b.process(&mut sim_env);
-
-    println!("{:?}",sim_env.event_list);
-
-    sim_env.run_sim();
-
-
-    // let mut servers:Vec<Server> = Vec::new();
-    // let num_servers:u8 = 2;
-
-    // for id in 0..num_servers {
-    //     servers.push(Server::new(id+1));
-    // }
-
-    // sim(people,servers);
-    // // random_sampling_data();
-
-}
 
 struct Environment {
-    event_list:HashMap<u64,VecDeque<(u64,String,u64)>>,
+    event_list:HashMap<u64,VecDeque<IdleEvent>>,
+    resources:HashMap<String,Resource>,
+    resource_queues:HashMap<String,VecDeque<(u64,u64)>>,
 }
 
 impl Environment {
 
     fn new() -> Environment {
-        Environment { event_list:HashMap::new() }
+        Environment {
+            event_list:HashMap::new(),
+            resources:HashMap::new(),
+            resource_queues:HashMap::new(),        
+        }
     }
 
-    fn timeout(&mut self, person:&Person, time_consumption:u64) {
+    fn timeout(&mut self, person:&Person, process_time:u64) {
 
         self.event_list
             .entry(person.id)
             .or_insert_with(VecDeque::new)
-            .push_back((person.id,"timeout".to_string(),time_consumption));
-
+            .push_back(
+                IdleEvent { id:person.id, event_type:"timeout".to_string(), process_time:process_time, target:"".to_string() }
+            );
     }
 
-    fn get_resource(&mut self, person:&Person, process_time:u64) {
+    fn enter_queue(&mut self, person:&Person, process_time:u64, target:String) {
 
         self.event_list
             .entry(person.id)
             .or_insert_with(VecDeque::new)
-            .push_back((person.id,"get_resource".to_string(),process_time));
+            .push_back(
+                IdleEvent { id:person.id, event_type:"enter_queue".to_string(), process_time:process_time, target:target }
+            );
 
     }
 
+    fn add_resource(&mut self, resource:Resource) {
+
+        self.resources
+            .entry(resource.resource_name.clone())
+            .or_insert(resource);
+
+    }
+
+    fn add_queue(&mut self, queue:SimulationQueue) {
+
+        self.resource_queues
+            .entry(queue.queue_name)
+            .or_insert(queue.queue);
+
+    }
     // fn log(&mut self, person:&Person, message:String) {
     //     self.event_list.push_back((person.id,"log".to_string(),0));
     //     println!("{:?}, {}", person, message);
     // }
 
 
-    fn _organise_initial_events(&mut self) -> VecDeque<(u64,String,u64,u64)> {
+    fn _organise_initial_events(&mut self) -> VecDeque<ActiveEvent> {
         /*
         The first event for each agent is moved to a scheduled events list.
         Any agents that are left with an empty event list are removed from the HashMap.
          */
 
-        let mut scheduled_events:VecDeque<(u64,String,u64,u64)> = VecDeque::new();
+        let mut scheduled_events:VecDeque<ActiveEvent> = VecDeque::new();
         let mut keys_to_remove:Vec<u64> = Vec::new();
 
         for (key, queue) in self.event_list.iter_mut() {
             if let Some(event) = queue.pop_front() {
-                scheduled_events.push_back((event.0,event.1,event.2,0));
+                scheduled_events.push_back(
+                    ActiveEvent { id:event.id, event_type:event.event_type, process_time:event.process_time, target:event.target, scheduled_time:0 }
+                );
 
                 if queue.is_empty() {
                     keys_to_remove.push(*key);
@@ -97,31 +89,78 @@ impl Environment {
 
     }
 
-    fn run_sim(&mut self) {
-        
+    fn run_sim(&mut self) -> Vec<String> {
+
+        let mut sim_logs:Vec<String> = Vec::new();
         let mut sim_time:u64 = 0;
+        let mut loops:u16 = 1000;
+        let mut scheduled_events:VecDeque<ActiveEvent> = self._organise_initial_events();
+        let mut staged_events:VecDeque<ActiveEvent> = VecDeque::new();
 
-        // id, event_type, sim_time, scheduled time.
-        let mut scheduled_events:VecDeque<(u64,String,u64,u64)> = self._organise_initial_events();
-        let mut count:u16 = u16::MAX;
 
+        while loops > 0 {
 
-        while (scheduled_events.len() > 0) & (count > 0) {
+            // println!("Sim time: {}", sim_time);
+            // println!("Loop: {}", loops);
+
+            let mut keys_to_remove:Vec<u64> = Vec::new();
 
             scheduled_events.retain(|event| {
-                if event.3 == sim_time {
-                    match event.1.as_str() {
+                if event.scheduled_time == sim_time {
+                    
+                    match event.event_type.as_str() {
                         "timeout" => {
-                            
+
+                            sim_logs.push(
+                                format!("{}: Person id {} is executing event {}.", sim_time, event.id, event.event_type)
+                            );
+
+                            // sim time + timeout time.
+                            staged_events.push_back(
+                                ActiveEvent { id:event.id, event_type:"end_timeout".to_string(), process_time:0, target:event.target.clone(), scheduled_time:sim_time+event.process_time }
+                            );
 
                         }
 
-                        "get_resource" => {
+                        "end_timeout" => {
+
+                            sim_logs.push(
+                                format!("{}: Person id {} is executing event {}.", sim_time, event.id, event.event_type)
+                            );
+
+                            // Pop the next event for this id, and schedule it to be current.
+                            // sim time + timeout time.
+                            if let Some(next_event_for_agent) = self.event_list.get_mut(&event.id) {
+                                if let Some(idle_event) = next_event_for_agent.pop_front() {
+                                    staged_events.push_back(
+                                        ActiveEvent { id:idle_event.id, event_type:idle_event.event_type, process_time:idle_event.process_time, target:idle_event.target, scheduled_time:sim_time }
+                                    );
+                                }
+                            }
+
+                            if let Some(queue) = self.event_list.get(&event.id) {
+                                if queue.is_empty() {
+                                    keys_to_remove.push(event.id);
+                                }
+                            }
+
+                        }
+
+                        "enter_queue" => {
+
+                            sim_logs.push(
+                                format!("{}: Person id {} is being added to {}.", sim_time, event.id, event.target)
+                            );
+
+                            self.resource_queues
+                                .get_mut(&event.target)
+                                .expect("User defined queue name.")
+                                .push_back((event.id, event.process_time));
 
                         }
 
                         _ => {
-                            println!("Unknown event type: {:?}", event.1);
+                            println!("Unknown event type: {:?}", event.event_type);
                         }
                     }
                     false
@@ -131,17 +170,172 @@ impl Environment {
 
             });
 
+            // Check if resource releases an agent at this time.
+            for (resource_name, resource) in self.resources.iter_mut() {
+                for (resource_capacity_id, resource_capacity) in resource
+                    .status
+                    .iter_mut()
+                    .filter(|(_, resource_capacity)| resource_capacity.available == sim_time)
+                {
+
+                    sim_logs.push(
+                        format!(
+                            "{}: {}, id {}, released Person id {}.",
+                            sim_time, resource_name, resource_capacity_id, resource_capacity.current_agent_id
+                        )
+                    );
+
+                    if let Some(event_queue) = self.event_list.get_mut(&resource_capacity.current_agent_id) {
+                        if let Some(next_event) = event_queue.pop_front() {
+                            staged_events.push_back(
+                                ActiveEvent { id:next_event.id, event_type:next_event.event_type.clone(), process_time:next_event.process_time, target:next_event.target, scheduled_time:sim_time }
+                            );
+                            sim_logs.push(
+                                format!(
+                                    "{}: Person id {} has event type {} moved from events list to scheduled events.",
+                                    sim_time, resource_capacity.current_agent_id, next_event.event_type
+                                )
+                            );
+                        }
+                    }
+
+                    resource_capacity.available = u64::MAX;
+                    resource_capacity.current_agent_id = u64::MAX;
+
+                }
+
+            }
 
 
-            count -= 1;
+            // For each resource... If resource is available and resource queue is not empty, then put agent into resource.
+            for resource in self.resources.values_mut() {
+                if let Some(queue) = self.resource_queues.get_mut(&resource.queue_target) {
+                    if queue.is_empty() {
+                        continue;
+                    }
+                    for (resource_capacity_id, resource_capacity) in resource
+                        .status
+                        .iter_mut()
+                        .filter(|(_, cap)| cap.available == u64::MAX)
+                    {
+                        if let Some((agent_id, agent_sim_time)) = queue.pop_front() {
+                            sim_logs.push(
+                                format!(
+                                    "{}: Adding Person id {} from {} to {} id {}.",
+                                    sim_time, agent_id, resource.queue_target, resource.resource_name, resource_capacity_id
+                                )
+                            );
+
+                            resource_capacity.current_agent_id = agent_id;
+                            resource_capacity.available = agent_sim_time + sim_time;
+
+                        } else {
+                            break; // queue is now empty.
+                        }
+                    }
+                }
+            }
+
+            // Move staged_events into scheduled_events.
+            if !staged_events.is_empty() {
+                scheduled_events.append(&mut staged_events);
+            }
+
+            // Remove any agents with no remaining events.
+            for key in keys_to_remove {
+                self.event_list.remove(&key);
+            }
+
+            // Check if sim is finished.
+            if scheduled_events.is_empty()
+                && self.resources.iter().all(|(_, res)| {
+                    res.status.values().all(|status| status.available == u64::MAX)
+                })
+            {
+                sim_logs.push(
+                    format!("{}: Simulation finished.", sim_time)
+                );
+
+                break;
+
+            }
+
+            // Update the sim clock.
+            if let Some(min_resource_available_time) = self.resources
+                .values()
+                .flat_map(|res| res.status.values().map(|s| s.available))
+                .min()
+            {
+                if let Some(min_scheduled_event_time) = scheduled_events.iter().min_by_key(|n| n.scheduled_time) {
+                    sim_time = min_scheduled_event_time.scheduled_time.min(min_resource_available_time);
+                } else {
+                    sim_time = min_resource_available_time;
+                }
+            }
+
+            loops -= 1;
         }
         
-        println!("{:?}", scheduled_events);
-
-        println!("{:?}", self.event_list);
+        sim_logs
 
 
     }
+}
+
+#[derive(Debug)]
+struct Resource {
+    resource_name:String,
+    queue_target:String,
+    status:HashMap<u64, ResourceStatus>,
+}
+
+impl Resource {
+
+    fn new_resource(capacity:u64, resource_name:String, queue_target:String) -> Resource {
+
+        let mut new_resource:Resource = Resource {
+            resource_name:resource_name,
+            queue_target:queue_target,
+            status:HashMap::new()
+        };
+
+        for cap in 1..capacity+1 {
+            new_resource
+                .status
+                .entry(cap)
+                .or_insert(ResourceStatus { available:u64::MAX, current_agent_id:u64::MAX});
+        }
+
+        new_resource
+
+    }
+}
+
+#[derive(Debug)]
+struct ResourceStatus {
+    available:u64,
+    current_agent_id:u64
+}
+
+struct SimulationQueue {
+    queue_name:String,
+    queue:VecDeque<(u64,u64)>,
+}
+
+#[derive(Debug)]
+struct IdleEvent {
+    id:u64,
+    event_type:String,
+    process_time:u64,
+    target:String,
+}
+
+struct ActiveEvent {
+    id:u64,
+    event_type:String,
+    process_time:u64,
+    target:String,
+    scheduled_time:u64,
 }
 
 #[derive(Debug)]
@@ -156,8 +350,48 @@ impl Person {
     fn process(self, sim_env:&mut Environment) {
         sim_env.timeout(&self, self.spawn_time);
         // sim_env.log(&self, "I've spawned".to_string());
-        sim_env.get_resource(&self, self.process_time);
+        sim_env.enter_queue(&self, self.process_time, "queue_1".to_string());
         // sim_env.log(&self, "Finished with resource".to_string());
     }
 
 }
+
+
+fn main() {
+
+    let people:Vec<Person> = vec![
+        Person {id:1,spawn_time:3,process_time:1},
+        Person {id:2,spawn_time:3,process_time:7},
+        Person {id:3,spawn_time:3,process_time:10},
+    ];
+
+    let mut sim_env:Environment = Environment::new();
+    let resource_queue:SimulationQueue = SimulationQueue { queue_name: "queue_1".to_string(), queue: VecDeque::new() };
+    let resource_a:Resource = Resource::new_resource(2, "resource_1".to_string(), "queue_1".to_string());
+    let resource_b:Resource = Resource::new_resource(1, "resource_2".to_string(), "queue_1".to_string());
+    
+    for person in people.into_iter() {
+        person.process(&mut sim_env);
+    }
+
+    sim_env.add_resource(resource_a);
+    sim_env.add_resource(resource_b);
+    sim_env.add_queue(resource_queue);
+
+
+    let sim_logs:Vec<String> = sim_env.run_sim();
+
+    for log in sim_logs {
+        println!("{}", log);
+    }
+
+    /*
+    TODO:
+    - Cleanup code
+    - Add interruptions
+    - Add parallelism
+    */
+
+
+}
+
