@@ -1,4 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, BinaryHeap};
+use std::cmp::Reverse;
+use std::fmt;
 
 
 
@@ -8,15 +10,17 @@ struct Environment {
     resource_queues:HashMap<String,VecDeque<(u64,u64)>>,
 }
 
-impl Environment {
-
-    fn new() -> Environment {
-        Environment {
+impl Default for Environment {
+    fn default() -> Self {
+        Self {
             event_list:HashMap::new(),
             resources:HashMap::new(),
             resource_queues:HashMap::new(),        
         }
     }
+}
+
+impl Environment {
 
     fn timeout(&mut self, person:&Person, process_time:u64) {
 
@@ -24,7 +28,12 @@ impl Environment {
             .entry(person.id)
             .or_insert_with(VecDeque::new)
             .push_back(
-                IdleEvent { id:person.id, event_type:"timeout".to_string(), process_time:process_time, target:"".to_string() }
+                IdleEvent {
+                    id:person.id,
+                    event_type:EventType::Timeout,
+                    process_time:process_time,
+                    target:String::new(),
+                }
             );
     }
 
@@ -34,7 +43,12 @@ impl Environment {
             .entry(person.id)
             .or_insert_with(VecDeque::new)
             .push_back(
-                IdleEvent { id:person.id, event_type:"enter_queue".to_string(), process_time:process_time, target:target }
+                IdleEvent {
+                    id:person.id,
+                    event_type:EventType::EnterQueue,
+                    process_time:process_time,
+                    target:target
+                }
             );
 
     }
@@ -72,7 +86,13 @@ impl Environment {
         for (key, queue) in self.event_list.iter_mut() {
             if let Some(event) = queue.pop_front() {
                 scheduled_events.push_back(
-                    ActiveEvent { id:event.id, event_type:event.event_type, process_time:event.process_time, target:event.target, scheduled_time:0 }
+                    ActiveEvent {
+                        id:event.id,
+                        event_type:event.event_type,
+                        process_time:event.process_time,
+                        target:event.target,
+                        scheduled_time:0
+                    }
                 );
 
                 if queue.is_empty() {
@@ -85,7 +105,7 @@ impl Environment {
             self.event_list.remove(&key);
         }
 
-        return scheduled_events
+        scheduled_events
 
     }
 
@@ -108,8 +128,9 @@ impl Environment {
             scheduled_events.retain(|event| {
                 if event.scheduled_time == sim_time {
                     
-                    match event.event_type.as_str() {
-                        "timeout" => {
+                    match event.event_type {
+
+                        EventType::Timeout => {
 
                             sim_logs.push(
                                 format!("{}: Person id {} is executing event {}.", sim_time, event.id, event.event_type)
@@ -117,12 +138,18 @@ impl Environment {
 
                             // sim time + timeout time.
                             staged_events.push_back(
-                                ActiveEvent { id:event.id, event_type:"end_timeout".to_string(), process_time:0, target:event.target.clone(), scheduled_time:sim_time+event.process_time }
+                                ActiveEvent {
+                                    id:event.id,
+                                    event_type:EventType::EndTimeout,
+                                    process_time:0,
+                                    target:event.target.clone(),
+                                    scheduled_time:sim_time+event.process_time
+                                }
                             );
 
                         }
 
-                        "end_timeout" => {
+                        EventType::EndTimeout => {
 
                             sim_logs.push(
                                 format!("{}: Person id {} is executing event {}.", sim_time, event.id, event.event_type)
@@ -133,7 +160,13 @@ impl Environment {
                             if let Some(next_event_for_agent) = self.event_list.get_mut(&event.id) {
                                 if let Some(idle_event) = next_event_for_agent.pop_front() {
                                     staged_events.push_back(
-                                        ActiveEvent { id:idle_event.id, event_type:idle_event.event_type, process_time:idle_event.process_time, target:idle_event.target, scheduled_time:sim_time }
+                                        ActiveEvent {
+                                            id:idle_event.id,
+                                            event_type:idle_event.event_type,
+                                            process_time:idle_event.process_time,
+                                            target:idle_event.target,
+                                            scheduled_time:sim_time
+                                        }
                                     );
                                 }
                             }
@@ -146,7 +179,7 @@ impl Environment {
 
                         }
 
-                        "enter_queue" => {
+                        EventType::EnterQueue => {
 
                             sim_logs.push(
                                 format!("{}: Person id {} is being added to {}.", sim_time, event.id, event.target)
@@ -159,9 +192,6 @@ impl Environment {
 
                         }
 
-                        _ => {
-                            println!("Unknown event type: {:?}", event.event_type);
-                        }
                     }
                     false
                 } else {
@@ -188,7 +218,13 @@ impl Environment {
                     if let Some(event_queue) = self.event_list.get_mut(&resource_capacity.current_agent_id) {
                         if let Some(next_event) = event_queue.pop_front() {
                             staged_events.push_back(
-                                ActiveEvent { id:next_event.id, event_type:next_event.event_type.clone(), process_time:next_event.process_time, target:next_event.target, scheduled_time:sim_time }
+                                ActiveEvent {
+                                    id:next_event.id,
+                                    event_type:next_event.event_type.clone(),
+                                    process_time:next_event.process_time,
+                                    target:next_event.target,
+                                    scheduled_time:sim_time
+                                }
                             );
                             sim_logs.push(
                                 format!(
@@ -282,6 +318,24 @@ impl Environment {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EventType {
+    Timeout,
+    EndTimeout,
+    EnterQueue,
+}
+
+impl fmt::Display for EventType {
+    fn fmt(&self, f:&mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            EventType::Timeout => "timeout",
+            EventType::EndTimeout => "end_timeout",
+            EventType::EnterQueue => "enter_queue",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 #[derive(Debug)]
 struct Resource {
     resource_name:String,
@@ -303,7 +357,10 @@ impl Resource {
             new_resource
                 .status
                 .entry(cap)
-                .or_insert(ResourceStatus { available:u64::MAX, current_agent_id:u64::MAX});
+                .or_insert(ResourceStatus {
+                    available:u64::MAX,
+                    current_agent_id:u64::MAX
+                });
         }
 
         new_resource
@@ -325,14 +382,14 @@ struct SimulationQueue {
 #[derive(Debug)]
 struct IdleEvent {
     id:u64,
-    event_type:String,
+    event_type:EventType,
     process_time:u64,
     target:String,
 }
 
 struct ActiveEvent {
     id:u64,
-    event_type:String,
+    event_type:EventType,
     process_time:u64,
     target:String,
     scheduled_time:u64,
@@ -349,9 +406,7 @@ impl Person {
 
     fn process(self, sim_env:&mut Environment) {
         sim_env.timeout(&self, self.spawn_time);
-        // sim_env.log(&self, "I've spawned".to_string());
         sim_env.enter_queue(&self, self.process_time, "queue_1".to_string());
-        // sim_env.log(&self, "Finished with resource".to_string());
     }
 
 }
@@ -365,7 +420,7 @@ fn main() {
         Person {id:3,spawn_time:3,process_time:10},
     ];
 
-    let mut sim_env:Environment = Environment::new();
+    let mut sim_env:Environment = Environment::default();
     let resource_queue:SimulationQueue = SimulationQueue { queue_name: "queue_1".to_string(), queue: VecDeque::new() };
     let resource_a:Resource = Resource::new_resource(2, "resource_1".to_string(), "queue_1".to_string());
     let resource_b:Resource = Resource::new_resource(1, "resource_2".to_string(), "queue_1".to_string());
@@ -387,7 +442,7 @@ fn main() {
 
     /*
     TODO:
-    - Cleanup code
+    - Utililse Binary heap and Reverse for scheduled_events.
     - Add interruptions
     - Add parallelism
     */
