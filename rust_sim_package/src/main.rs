@@ -276,7 +276,7 @@ impl Environment {
                 .flat_map(|res| res.status.values().map(|s| s.available))
                 .min()
             {
-                if let Some((_,min_scheduled_event_time)) = scheduled_events.iter().min_by_key(|(_, n)| n.scheduled_time) {
+                if let Some((_, min_scheduled_event_time)) = scheduled_events.peek() {
                     sim_time = min_scheduled_event_time.scheduled_time.min(min_resource_available_time);
                 } else {
                     sim_time = min_resource_available_time;
