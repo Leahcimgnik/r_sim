@@ -68,11 +68,6 @@ impl Environment {
             .or_insert(queue.queue);
 
     }
-    // fn log(&mut self, person:&Person, message:String) {
-    //     self.event_list.push_back((person.id,"log".to_string(),0));
-    //     println!("{:?}, {}", person, message);
-    // }
-
 
     fn _organise_initial_events(&mut self) -> VecDeque<ActiveEvent> {
         /*
@@ -84,16 +79,8 @@ impl Environment {
         let mut keys_to_remove:Vec<u64> = Vec::new();
 
         for (key, queue) in self.event_list.iter_mut() {
-            if let Some(event) = queue.pop_front() {
-                scheduled_events.push_back(
-                    ActiveEvent {
-                        id:event.id,
-                        event_type:event.event_type,
-                        process_time:event.process_time,
-                        target:event.target,
-                        scheduled_time:0
-                    }
-                );
+            if let Some(idle_event) = queue.pop_front() {
+                scheduled_events.push_back(ActiveEvent::from_idle_event(idle_event, 0));
 
                 if queue.is_empty() {
                     keys_to_remove.push(*key);
@@ -119,9 +106,6 @@ impl Environment {
 
 
         while loops > 0 {
-
-            // println!("Sim time: {}", sim_time);
-            // println!("Loop: {}", loops);
 
             let mut keys_to_remove:Vec<u64> = Vec::new();
 
@@ -159,15 +143,7 @@ impl Environment {
                             // sim time + timeout time.
                             if let Some(next_event_for_agent) = self.event_list.get_mut(&event.id) {
                                 if let Some(idle_event) = next_event_for_agent.pop_front() {
-                                    staged_events.push_back(
-                                        ActiveEvent {
-                                            id:idle_event.id,
-                                            event_type:idle_event.event_type,
-                                            process_time:idle_event.process_time,
-                                            target:idle_event.target,
-                                            scheduled_time:sim_time
-                                        }
-                                    );
+                                    staged_events.push_back(ActiveEvent::from_idle_event(idle_event, sim_time));
                                 }
                             }
 
@@ -216,22 +192,17 @@ impl Environment {
                     );
 
                     if let Some(event_queue) = self.event_list.get_mut(&resource_capacity.current_agent_id) {
-                        if let Some(next_event) = event_queue.pop_front() {
-                            staged_events.push_back(
-                                ActiveEvent {
-                                    id:next_event.id,
-                                    event_type:next_event.event_type.clone(),
-                                    process_time:next_event.process_time,
-                                    target:next_event.target,
-                                    scheduled_time:sim_time
-                                }
-                            );
+                        if let Some(idle_event) = event_queue.pop_front() {
+
                             sim_logs.push(
                                 format!(
                                     "{}: Person id {} has event type {} moved from events list to scheduled events.",
-                                    sim_time, resource_capacity.current_agent_id, next_event.event_type
+                                    sim_time, resource_capacity.current_agent_id, idle_event.event_type
                                 )
                             );
+
+                            staged_events.push_back(ActiveEvent::from_idle_event(idle_event, sim_time));
+
                         }
                     }
 
@@ -393,6 +364,18 @@ struct ActiveEvent {
     process_time:u64,
     target:String,
     scheduled_time:u64,
+}
+
+impl ActiveEvent {
+    fn from_idle_event(idle_event:IdleEvent, sim_time:u64) -> ActiveEvent {
+        ActiveEvent {
+            id:idle_event.id,
+            event_type:idle_event.event_type,
+            process_time:idle_event.process_time,
+            target:idle_event.target,
+            scheduled_time:sim_time,
+        }
+    }
 }
 
 #[derive(Debug)]
