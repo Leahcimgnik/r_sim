@@ -69,18 +69,19 @@ impl Environment {
 
     }
 
-    fn _organise_initial_events(&mut self) -> VecDeque<ActiveEvent> {
+    fn _organise_initial_events(&mut self) -> BinaryHeap<(Reverse<u64>, ActiveEvent)> {
         /*
         The first event for each agent is moved to a scheduled events list.
         Any agents that are left with an empty event list are removed from the HashMap.
          */
 
-        let mut scheduled_events:VecDeque<ActiveEvent> = VecDeque::new();
+        let mut scheduled_events: BinaryHeap<(Reverse<u64>, ActiveEvent)> = BinaryHeap::new();
         let mut keys_to_remove:Vec<u64> = Vec::new();
+        let sim_time:u64 = 0;
 
         for (key, queue) in self.event_list.iter_mut() {
             if let Some(idle_event) = queue.pop_front() {
-                scheduled_events.push_back(ActiveEvent::from_idle_event(idle_event, 0));
+                scheduled_events.push((Reverse(sim_time), ActiveEvent::from_idle_event(idle_event, sim_time)));
 
                 if queue.is_empty() {
                     keys_to_remove.push(*key);
@@ -101,15 +102,15 @@ impl Environment {
         let mut sim_logs:Vec<String> = Vec::new();
         let mut sim_time:u64 = 0;
         let mut loops:u16 = 1000;
-        let mut scheduled_events:VecDeque<ActiveEvent> = self._organise_initial_events();
-        let mut staged_events:VecDeque<ActiveEvent> = VecDeque::new();
+        let mut scheduled_events:BinaryHeap<(Reverse<u64>, ActiveEvent)> = self._organise_initial_events();
+        let mut staged_events:Vec<ActiveEvent> = Vec::new();
 
 
         while loops > 0 {
 
             let mut keys_to_remove:Vec<u64> = Vec::new();
 
-            scheduled_events.retain(|event| {
+            scheduled_events.retain(|(_, event)| {
                 if event.scheduled_time == sim_time {
                     
                     match event.event_type {
@@ -121,7 +122,7 @@ impl Environment {
                             );
 
                             // sim time + timeout time.
-                            staged_events.push_back(
+                            staged_events.push(
                                 ActiveEvent {
                                     id:event.id,
                                     event_type:EventType::EndTimeout,
@@ -143,7 +144,7 @@ impl Environment {
                             // sim time + timeout time.
                             if let Some(next_event_for_agent) = self.event_list.get_mut(&event.id) {
                                 if let Some(idle_event) = next_event_for_agent.pop_front() {
-                                    staged_events.push_back(ActiveEvent::from_idle_event(idle_event, sim_time));
+                                    staged_events.push(ActiveEvent::from_idle_event(idle_event, sim_time));
                                 }
                             }
 
@@ -201,7 +202,7 @@ impl Environment {
                                 )
                             );
 
-                            staged_events.push_back(ActiveEvent::from_idle_event(idle_event, sim_time));
+                            staged_events.push(ActiveEvent::from_idle_event(idle_event, sim_time));
 
                         }
                     }
@@ -244,9 +245,11 @@ impl Environment {
             }
 
             // Move staged_events into scheduled_events.
-            if !staged_events.is_empty() {
-                scheduled_events.append(&mut staged_events);
+            while !staged_events.is_empty() {
+                let moving_event = staged_events.pop().unwrap();
+                scheduled_events.push((Reverse(moving_event.scheduled_time),moving_event));
             }
+
 
             // Remove any agents with no remaining events.
             for key in keys_to_remove {
@@ -273,7 +276,7 @@ impl Environment {
                 .flat_map(|res| res.status.values().map(|s| s.available))
                 .min()
             {
-                if let Some(min_scheduled_event_time) = scheduled_events.iter().min_by_key(|n| n.scheduled_time) {
+                if let Some((_,min_scheduled_event_time)) = scheduled_events.iter().min_by_key(|(_, n)| n.scheduled_time) {
                     sim_time = min_scheduled_event_time.scheduled_time.min(min_resource_available_time);
                 } else {
                     sim_time = min_resource_available_time;
@@ -289,7 +292,7 @@ impl Environment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum EventType {
     Timeout,
     EndTimeout,
@@ -358,6 +361,7 @@ struct IdleEvent {
     target:String,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct ActiveEvent {
     id:u64,
     event_type:EventType,
@@ -378,12 +382,26 @@ impl ActiveEvent {
     }
 }
 
+impl Ord for ActiveEvent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id) // or any stable fallback comparison
+    }
+}
+
+impl PartialOrd for ActiveEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Debug)]
 struct Person {
     id:u64,
     spawn_time:u64,
     process_time:u64,
 }
+
+
 
 impl Person {
 
@@ -425,7 +443,6 @@ fn main() {
 
     /*
     TODO:
-    - Utililse Binary heap and Reverse for scheduled_events.
     - Add interruptions
     - Add parallelism
     */
