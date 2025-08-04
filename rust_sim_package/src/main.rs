@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque, BinaryHeap};
 use std::cmp::Reverse;
 use std::fmt;
+use std::thread::spawn;
 
 
 
@@ -66,6 +67,17 @@ impl Environment {
         self.resource_queues
             .entry(queue.queue_name)
             .or_insert(queue.queue);
+
+    }
+
+    fn resource_interruption(
+        &mut self,
+        id:u64,
+        spawn_time:u64,
+        target:String,
+        capacity_interrupted:u64,
+        duration:u64,
+    ) {
 
     }
 
@@ -166,6 +178,10 @@ impl Environment {
                                 .get_mut(&event.target)
                                 .expect("User defined queue name.")
                                 .push_back((event.id, event.process_time));
+
+                        }
+
+                        EventType::ResourceInterruption => {
 
                         }
 
@@ -297,6 +313,7 @@ enum EventType {
     Timeout,
     EndTimeout,
     EnterQueue,
+    ResourceInterruption,
 }
 
 impl fmt::Display for EventType {
@@ -305,6 +322,7 @@ impl fmt::Display for EventType {
             EventType::Timeout => "timeout",
             EventType::EndTimeout => "end_timeout",
             EventType::EnterQueue => "enter_queue",
+            EventType::ResourceInterruption => "resource_interruption",
         };
         write!(f, "{}", s)
     }
@@ -412,6 +430,31 @@ impl Person {
 
 }
 
+struct ResourceInterruption {
+    id:u64,
+}
+
+impl ResourceInterruption {
+
+    fn add_interruption(
+        &self,
+        spawn_time:u64,
+        target:String,
+        capacity_interrupted:u64,
+        duration:u64,
+        sim_env:&mut Environment,
+    ) {
+        sim_env.resource_interruption(
+            self.id,
+            spawn_time,
+            target,
+            capacity_interrupted,
+            duration,
+        );
+    }
+
+}
+
 
 fn main() {
 
@@ -443,7 +486,8 @@ fn main() {
 
     /*
     TODO:
-    - Add interruptions
+    - Add resource interruptions
+    - Add agent interruptions
     - Add parallelism
     */
 
